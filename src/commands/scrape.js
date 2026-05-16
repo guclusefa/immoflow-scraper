@@ -37,32 +37,56 @@ async function sendDiscordRunAlert({ summary, startedAt, endedAt, sourceId }) {
 
   const details = summary
     .map((row) => {
-      if (row.error) return `- ${row.id}: FAILED (${row.error})`;
-      if (row.skipped) return `- ${row.id}: SKIPPED`;
-      return `- ${row.id}: OK (${row.newCount} new, ${row.updatedCount} updated)`;
+      if (row.error) return `• **${row.id}**: ❌ FAILED — ${row.error}`;
+      if (row.skipped) return `• **${row.id}**: ⚠️ SKIPPED`;
+      return `• **${row.id}**: ✅ OK — ${row.newCount} new, ${row.updatedCount} updated`;
     })
     .join('\n');
 
-  const content = [
-    `**${header}**`,
-    `mode: ${modeLabel}`,
-    `duration_ms: ${durationMs}`,
-    `sources: ok=${stats.succeeded}, failed=${stats.failed}, skipped=${stats.skipped}`,
-    `rows: new=${stats.newCount}, updated=${stats.updatedCount}`,
-    '',
-    details,
-  ].join('\n').slice(0, 1900);
+  // Short list of failed items for quick scan
+  const failedDetails = summary
+    .filter((r) => r.error)
+    .map((r) => `• ${r.id}: ${r.error}`)
+    .slice(0, 6)
+    .join('\n');
+
+  const color = hasFailure ? 0xE74C3C : 0x2ECC71; // red / green
+  const elapsedSec = (durationMs / 1000).toFixed(1) + 's';
+
+  const embed = {
+    title: `${hasFailure ? '❌' : '✅'} ${header}`,
+    color,
+    fields: [
+      { name: 'Mode', value: modeLabel, inline: true },
+      { name: 'Duration', value: elapsedSec, inline: true },
+      { name: 'Sources', value: `ok=${stats.succeeded}, failed=${stats.failed}, skipped=${stats.skipped}`, inline: true },
+      { name: 'Rows', value: `new=${stats.newCount}, updated=${stats.updatedCount}`, inline: true },
+    ],
+    description: details.slice(0, 3800) || '—',
+    timestamp: endedAt.toISOString(),
+    footer: { text: 'immoflow scraper' },
+  };
+
+  // If there are failures, add a concise failed-details field for quick scanning
+  if (hasFailure && failedDetails) {
+    embed.fields.push({ name: 'Failures (first 6)', value: failedDetails.slice(0, 1024) });
+  }
+
+  const body = {
+    username: 'immoflow',
+    embeds: [embed],
+  };
 
   try {
     const res = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(body),
     });
 
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.error(`⚠️  Discord webhook failed (${res.status}): ${body}`);
+      const respText = await res.text().catch(() => '');
+      console.error(`⚠️  Discord webhook failed (${res.status}): ${respText}`);
     }
   } catch (err) {
     console.error(`⚠️  Discord webhook error: ${err.message}`);

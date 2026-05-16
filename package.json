@@ -1,7 +1,7 @@
 {
   "name": "immoflow-scraper",
   "version": "2.0.0",
-  "description": "Facebook real estate scraper — writes to shared immoflow Supabase listings table",
+  "description": "Real estate scraper — writes to shared immoflow Supabase listings table",
   "main": "src/main.js",
   "scripts": {
     "login":              "node src/main.js login",
