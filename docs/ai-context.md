@@ -161,3 +161,5 @@ Add new variables to `.env.example` when adding a source.
    may be present but are often unavailable in marketplace listings.
 - `petites-annonces` — Petitesannonces.ch location search results. No login required. Env: `PETITES_ANNONCES_URLS`.
   Reliably returns: `address_raw`, `price`, `rooms`, `living_space_m2`, `street`, `street_number`, `zip_code`, `city`, `property_type`, `image_urls`.
+- `immobilier-ch` — immobilier.ch Lausanne rental search results. No login required. Env: `IMMOBILIER_CH_URLS`.
+  Reliably returns: `address_raw`, `price`, `rooms`, `living_space_m2`, `street`, `street_number`, `zip_code`, `city`, `property_type`, `title`, `image_urls`.
