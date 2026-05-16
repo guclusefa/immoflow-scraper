@@ -163,3 +163,5 @@ Add new variables to `.env.example` when adding a source.
   Reliably returns: `address_raw`, `price`, `rooms`, `living_space_m2`, `street`, `street_number`, `zip_code`, `city`, `property_type`, `image_urls`.
 - `immobilier-ch` — immobilier.ch Lausanne rental search results. No login required. Env: `IMMOBILIER_CH_URLS`.
   Reliably returns: `address_raw`, `price`, `rooms`, `living_space_m2`, `street`, `street_number`, `zip_code`, `city`, `property_type`, `title`, `image_urls`.
+- `room-estate` — Room Estate Lausanne room search results. No login required. Env: `ROOM_ESTATE_URLS`.
+  Reliably returns: `address_raw`, `price`, `living_space_m2`, `floor`, `city`, `property_type`, `title`, `image_urls`.
