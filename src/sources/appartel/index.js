@@ -109,16 +109,16 @@ function buildSupabaseApiUrl(targetUrl) {
   if (Number.isFinite(maxPrice) && maxPrice > 0) {
     endpoint.searchParams.set('prix_mois', `lte.${maxPrice}`);
   }
+  let url = endpoint.toString();
   if (city) {
     const normalized = city.toLowerCase().trim();
-    endpoint.searchParams.set('or', [
+    url += `&or=(${[
       `ville.ilike.%25${normalized}%25`,
       `canton.ilike.%25${normalized}%25`,
       `quartier.ilike.%25${normalized}%25`,
-    ].join(','));
+    ].join(',')})`;
   }
-  endpoint.searchParams.set('order', 'created_at.desc');
-  return endpoint.toString();
+  return `${url}&order=created_at.desc`;
 }
 
 async function fetchListingsFromApi(page) {
