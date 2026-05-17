@@ -229,7 +229,7 @@ module.exports = {
   loginRequired:          true,
 
   scrollTargetPreference: 'document',
-  scrollSafetyLimit:      3,
+  scrollSafetyLimit:      10,
   scrollIdleRounds:       6,
   initialDelayMs:         8000,
   scrollDelayMs:          1200,
