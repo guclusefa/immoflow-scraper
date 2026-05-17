@@ -36,12 +36,10 @@ function extractListingsFromDocument() {
 
   cards.forEach((card) => {
     try {
-      const fullText = card.innerText || card.textContent || '';
+      const fullText = (card.innerText || card.textContent || '').trim();
       
-      // Skip pagination elements (which just contain a number) and empty cards
-      if (/^\d+$/.test(fullText.trim()) || !/CHF/i.test(fullText)) return;
+      if (!fullText || /^\d+$/.test(fullText) || !/CHF/i.test(fullText)) return;
 
-      // Separate the text nodes to avoid concatenating them into one giant string
       const textNodes = Array.from(card.querySelectorAll('.bubble-element.Text'))
         .map((n) => (n.innerText || n.textContent).trim())
         .filter(Boolean);
@@ -53,28 +51,31 @@ function extractListingsFromDocument() {
       textNodes.forEach((line) => {
         if (/CHF/i.test(line)) priceText = line;
         else if (/m²/i.test(line)) locationText = line;
-        else if (/Disponible/i.test(line)) dateText = line;
+        else if (/disponible|available/i.test(line) || /\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4}/.test(line)) {
+          dateText = line;
+        }
       });
 
-      // Extract the background image url and the unique Bubble file ID
       let imgUrl = null;
       let imageId = null;
       
       const imageNode = card.querySelector('[style*="background-image"]');
       if (imageNode) {
         const style = imageNode.getAttribute('style') || '';
-        const matchImg = style.match(/background-image:\s*url\((["']?)(.*?)\1\)/i);
-        if (matchImg) {
-          imgUrl = matchImg[2];
+        const matchImg = style.match(/background-image\s*:\s*url\s*\(\s*["']?([^"'\)]*)["']?\s*\)/i);
+        if (matchImg && matchImg[1]) {
+          // Crucial fix: forcibly replace HTML entities so offline parsing perfectly matches live parsing
+          imgUrl = matchImg[1].replace(/&quot;/g, '').replace(/&amp;/g, '&').trim();
           if (imgUrl.startsWith('//')) imgUrl = `https:${imgUrl}`;
           
-          // Extract Bubble's unique file ID (e.g., f1777907935548x910785138541265000)
-          const idMatch = imgUrl.match(/f(\d+x\d+)/);
-          if (idMatch) imageId = idMatch[1];
+          const decodedImgUrl = decodeURIComponent(imgUrl);
+          const idMatch = decodedImgUrl.match(/f(\d+x\d+)/);
+          if (idMatch) {
+            imageId = idMatch[1];
+          }
         }
       }
 
-      // Generate a raw fingerprint to prevent duplicates on the same page
       const rawId = imageId || `${priceText}-${locationText}`;
       if (seen.has(rawId)) return;
       seen.add(rawId);
@@ -84,6 +85,7 @@ function extractListingsFromDocument() {
         priceText,
         locationText,
         dateText,
+        fullText, 
         imgUrl
       });
     } catch (_) {}
@@ -97,39 +99,42 @@ async function extractListings(page) {
   const raw = await page.evaluate(extractListingsFromDocument);
 
   return raw.map((item) => {
-    // 1. Parse Area, Zip Code, and City
-    // Matches formats like "165 m² - 1033, Cheseaux-sur-Lausanne" or "91 m² - , Lausanne"
     let zip = null;
     let city = null;
     let area = null;
-    const locMatch = item.locationText.match(/([\d\s.,]+)\s*m²\s*-\s*(?:(\d{4})\s*,)?\s*(.+)/i);
+    const locMatch = (item.locationText || '').match(/([\d\s.,]+)\s*m²\s*-\s*(?:(\d{4})\s*,)?\s*(.+)/i);
     
     if (locMatch) {
       area = parseFloat(locMatch[1].replace(/\s+/g, '').replace(',', '.'));
       zip = locMatch[2] ? locMatch[2].trim() : null;
-      // Clean up leading commas if the zip was missing (e.g., ", Crissier" -> "Crissier")
       city = locMatch[3] ? locMatch[3].replace(/^,\s*/, '').trim() : null;
     }
 
-    // 2. Parse Date
-    // Matches formats like "Disponible à partir du 01/6/26"
     let availableFrom = null;
-    if (item.dateText) {
-        const dateMatch = item.dateText.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-        if (dateMatch) {
-        const d = parseInt(dateMatch[1], 10);
-        const m = parseInt(dateMatch[2], 10);
-        let y = parseInt(dateMatch[3], 10);
-        if (y < 100) y += 2000;
+    const textToSearchForDate = item.dateText || item.fullText || '';
+    
+    const isoMatch = textToSearchForDate.match(/(\d{4})\s*[\/\.\-]\s*(\d{1,2})\s*[\/\.\-]\s*(\d{1,2})/);
+    const euroMatch = textToSearchForDate.match(/(\d{1,2})\s*[\/\.\-]\s*(\d{1,2})\s*[\/\.\-]\s*(\d{2,4})/);
+
+    if (isoMatch) {
+      const y = parseInt(isoMatch[1], 10);
+      const m = parseInt(isoMatch[2], 10);
+      const d = parseInt(isoMatch[3], 10);
+      if (y >= 2000 && y < 2100) {
         availableFrom = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        }
+      }
+    } else if (euroMatch) {
+      const d = parseInt(euroMatch[1], 10);
+      const m = parseInt(euroMatch[2], 10);
+      let y = parseInt(euroMatch[3], 10);
+      if (y < 100) y += 2000;
+      if (y >= 2000 && y < 2100) {
+        availableFrom = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      }
     }
 
-    // 3. Construct clean Address
     const addressRaw = [zip, city].filter(Boolean).join(' ') || item.locationText;
 
-    // 4. Create a Distinct ID
-    // Use the Bubble image ID if available, otherwise fallback to a composite slug
     const fallbackSlug = `${item.priceText}-${area || 0}-${city || 'unknown'}`
       .replace(/\s+/g, '')
       .replace(/[^a-zA-Z0-9]/g, '-');
@@ -139,7 +144,7 @@ async function extractListings(page) {
     return {
       id: `${ID_PREFIX}${distinctId}`,
       source: SOURCE_CONST,
-      url: DEFAULT_TARGET_URL, // SPA fallback since distinct routing URLs aren't exposed in the DOM cards
+      url: DEFAULT_TARGET_URL, 
       address_raw: addressRaw,
       image_urls: item.imgUrl ? [item.imgUrl] : [],
       title: null,
