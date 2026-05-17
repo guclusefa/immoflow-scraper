@@ -15,6 +15,7 @@ Use this workflow when adding a new source from a prompt like: `Add this source 
 2. Export the source object from `src/sources/<source>/index.js`.
 3. Define the source metadata and URL matching rule.
 4. Implement `getTargets`, `normalizeTargetUrl`, and `extractListings`.
+	Prefer a public API or JSON endpoint when the site exposes one; only fall back to DOM parsing when the API is unavailable or incomplete.
 5. Add fixture HTML and expected JSON under `data/<source>/`.
 6. Do not edit the registry when adding a source; the loader discovers folders automatically.
 7. Keep the root entrypoint untouched; new sources should only extend the source folder set.

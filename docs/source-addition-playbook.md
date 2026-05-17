@@ -17,6 +17,8 @@ Before writing code, answer these questions:
 4. What is a reliable container selector for each listing?
 5. What structured fields are available? (price, rooms, surface, address, coordinates, …)
 
+If the site exposes a stable public JSON or API endpoint, use that instead of parsing rendered HTML. Parse the DOM only when the API is unavailable or missing fields you need.
+
 Open the URL in a browser, inspect the DOM, find the repeating element that
 wraps each listing. That is your `LISTING_SELECTOR`.
 
@@ -36,8 +38,9 @@ Key decisions:
 - `loginRequired` — if the site shows different content when logged in, set
   this to `true` and define `loginUrl`.
 - `getTargets` reads `env.<ID_UPPERCASE>_URLS`. Match this exactly.
-- `extractListings` runs inside the browser via `page.evaluate()`. Only use
-  browser APIs (no Node.js modules inside the callback). Post-processing
+- `extractListings` should prefer the site's public API if one exists. When DOM
+  parsing is necessary, it runs inside the browser via `page.evaluate()`. Only
+  use browser APIs (no Node.js modules inside the callback). Post-processing
   (regex parsing, id prefixing) happens outside `page.evaluate`, in Node.js.
 
 ### Required return shape from `extractListings`

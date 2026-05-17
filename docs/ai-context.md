@@ -169,6 +169,8 @@ Add new variables to `.env.example` when adding a source.
   Reliably returns: `address_raw`, `price`, `rooms`, `living_space_m2`, `street`, `street_number`, `city`, `property_type`, `title`, `image_urls`.
 - `appartel` — Appartel Lausanne search results. No login required. Env: `APPARTEL_URLS`.
   Reliably returns: `address_raw`, `price`, `city`, `property_type`, `title`.
+- `helvetia` — Helvetia Lausanne search results backed by Flatfox APIs. No login required. Env: `HELVETIA_URLS`.
+  Prefer API data over rendered HTML; reliably returns `address_raw`, `price`, `rooms`, `living_space_m2`, `city`, `property_type`, `title`, `image_urls`, `available_from`.
 - `derham` — Derham Lausanne rentals filtered by price and proximity. No login required. Env: `DERHAM_URLS`.
   Reliably returns: `address_raw`, `price`, `rooms`, `living_space_m2`, `zip_code`, `city`, `property_type`.
 - `myhomies` — myHOMIES Lausanne colocation search results. No login required. Env: `MYHOMIES_URLS`.
