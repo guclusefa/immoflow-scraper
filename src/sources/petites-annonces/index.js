@@ -193,7 +193,7 @@ module.exports = {
   name: 'Petitesannonces.ch',
   loginRequired: false,
   loginUrl: null,
-  scrollSafetyLimit: 20,
+  scrollSafetyLimit: 10, // only 20 listings per page, so we can stop after a few rounds to avoid infinite loops
   scrollIdleRounds: 3,
   initialDelayMs: 2500,
   scrollDelayMs: 1000,

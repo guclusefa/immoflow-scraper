@@ -49,14 +49,15 @@ function extractListingsFromDocument() {
 
   const text = (node) => String(node?.textContent || '').replace(/\s+/g, ' ').trim();
 
-  const cards = Array.from(document.querySelectorAll('a[href^="/fr/louer/"]')).filter((anchor) => {
-    const value = text(anchor);
-    return /CHF/i.test(value) && /pièces?/i.test(value);
-  });
+  // Iterate over the full listing card containers instead of just anchor links
+  const cards = Array.from(document.querySelectorAll('.views-row.loaded'));
 
   cards.forEach((card) => {
     try {
-      const href = card.getAttribute('href') || card.href || '';
+      const anchor = card.querySelector('.info-sec a');
+      if (!anchor) return;
+
+      const href = anchor.getAttribute('href') || anchor.href || '';
       const match = href.match(/\/fr\/louer\/([^/?#]+)/);
       if (!match) return;
 
@@ -64,29 +65,42 @@ function extractListingsFromDocument() {
       if (seen.has(rawId)) return;
       seen.add(rawId);
 
-      const postalMatch = text(card).match(/\b(\d{4})\s+([^\n]+?)\s+CHF/i);
-      const priceNode = card.querySelector('.field--name-field-total-price') || null;
-      const propertyTypeNode = Array.from(card.querySelectorAll('.property-info-sec-common span')).find((node) => {
-        const value = text(node).toLowerCase();
-        return value === 'appartement' || value === 'maison' || value === 'immeuble' || value === 'local commercial';
-      }) || null;
-      const parts = Array.from(card.querySelectorAll('.property-info-sec-common span')).map((node) => text(node)).filter(Boolean);
-      const roomText = parts.find((value) => /pièces?/i.test(value)) || '';
-      const areaText = parts.find((value) => /m²?/i.test(value) || /m2/i.test(value)) || '';
+      // Location extraction
+      const locationNode = card.querySelector('.info-sec p');
+      const locationText = text(locationNode);
+      const postalMatch = locationText.match(/\b(\d{4})\s+(.+)/i);
 
-      const addressRaw = postalMatch ? `${postalMatch[1]} ${postalMatch[2]}` : text(card);
+      // FIX: Reverted to extracting the text content (e.g., "CHF 1'730") 
+      // which works perfectly with your extractPrice utility.
+      const priceNode = card.querySelector('.field--name-field-total-price');
+      const priceValue = priceNode ? text(priceNode) : null;
+
+      // Attributes extraction (Type, rooms, m2)
+      const infoSpans = Array.from(card.querySelectorAll('.property-info-sec-common span')).map(n => text(n)).filter(Boolean);
+      const propertyType = infoSpans.length > 0 ? infoSpans[0] : null;
+      const roomText = infoSpans.find((val) => /pièces?/i.test(val)) || '';
+      const areaText = infoSpans.find((val) => /m²?/i.test(val) || /m2/i.test(val)) || '';
+
+      // Image extraction
+      const imgNodes = Array.from(card.querySelectorAll('.carousel-item img'));
+      const image_urls = imgNodes.map((img) => {
+        const src = img.getAttribute('src') || img.src;
+        if (!src) return null;
+        return src.startsWith('/') ? `https://www.derham.ch${src}` : src;
+      }).filter(Boolean);
 
       results.push({
         rawId,
         url: href.startsWith('/') ? `https://www.derham.ch${href}` : href,
-        address_raw: addressRaw,
+        address_raw: locationText,
         title: null,
-        property_type: text(propertyTypeNode) || null,
+        property_type: propertyType,
         location_raw: postalMatch ? postalMatch[2].trim() : null,
         postal_code: postalMatch ? postalMatch[1] : null,
-        price: text(priceNode),
+        price: priceValue,
         rooms: roomText,
         living_space_m2: areaText,
+        image_urls: image_urls
       });
     } catch (_) {}
   });
@@ -95,7 +109,8 @@ function extractListingsFromDocument() {
 }
 
 async function extractListings(page) {
-  await page.waitForSelector('a[href^="/fr/louer/"] .property-info-sec-common, a[href^="/fr/louer/"] .field--name-field-total-price', { timeout: 15000 });
+  // Wait for the new robust selector
+  await page.waitForSelector('.views-row.loaded .info-sec a', { timeout: 15000 });
   const raw = await page.evaluate(extractListingsFromDocument);
 
   return raw.map((item) => ({
@@ -103,7 +118,7 @@ async function extractListings(page) {
     source: SOURCE_CONST,
     url: item.url,
     address_raw: item.address_raw,
-    image_urls: [],
+    image_urls: item.image_urls || [],
     title: item.title || null,
     description: null,
     price: extractPrice(item.price),

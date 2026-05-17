@@ -175,7 +175,7 @@ module.exports = {
   name: 'immobilier.ch',
   loginRequired: false,
   loginUrl: null,
-  scrollSafetyLimit: 10,
+  scrollSafetyLimit: 10, // only 21 listings per page, so we can stop after a few rounds to avoid infinite loops in case of unexpected page structure changes
   scrollIdleRounds: 2,
   initialDelayMs: 2500,
   scrollDelayMs: 1000,

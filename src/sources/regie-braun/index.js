@@ -172,7 +172,7 @@ module.exports = {
   name: 'Régie Braun',
   loginRequired: false,
   loginUrl: null,
-  scrollSafetyLimit: 20,
+  scrollSafetyLimit: 10,
   scrollIdleRounds: 3,
   initialDelayMs: 2500,
   scrollDelayMs: 1000,

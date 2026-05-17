@@ -43,51 +43,139 @@ function getTargets({ urls = [], env = {} } = {}) {
 // ---------------------------------------------------------------------------
 
 function extractListingsFromDocument() {
-  const results   = [];
+  const results = [];
   const feedItems = document.querySelectorAll('div[aria-posinset]');
+
+  const normalizeWhitespace = (str) =>
+    str
+      .replace(/\u00A0/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const dedupeLines = (text) => {
+    const seen = new Set();
+
+    return text
+      .split('\n')
+      .map((line) => normalizeWhitespace(line))
+      .filter(Boolean)
+      .filter((line) => {
+        if (seen.has(line)) return false;
+        seen.add(line);
+        return true;
+      })
+      .join('\n');
+  };
 
   feedItems.forEach((item) => {
     try {
       if (!item.innerText || item.innerText.trim().length === 0) return;
 
-      // Clone and strip noise nodes (reactions, comment boxes, etc.)
+      // Clone node to safely mutate
       const postClone = item.cloneNode(true);
-      postClone
-        .querySelectorAll('div[role="article"], form, [role="button"], [aria-label*="comment" i], [aria-label*="réponse" i]')
-        .forEach((node) => node.remove());
 
-      const textNodes   = Array.from(postClone.querySelectorAll('div[dir="auto"]'));
-      const cleanTexts  = textNodes.map((n) => n.innerText.trim()).filter((t) => t.length > 0);
-      const mainContent = cleanTexts.join('\n').replace(/\n\s*\n/g, '\n').trim();
+      // Remove noisy interactive elements
+      postClone.querySelectorAll([
+        'form',
+        '[role="button"]',
+        '[aria-label*="comment" i]',
+        '[aria-label*="réponse" i]',
+        '[aria-label*="like" i]',
+        '[aria-label*="j’aime" i]',
+        '[aria-label*="share" i]',
+        '[aria-label*="partager" i]',
+        'svg',
+        'video',
+      ].join(',')).forEach((node) => node.remove());
 
-      // Skip non-listing noise (marketplace promotions, very short posts)
-      if (mainContent.includes('Vendre un article') && mainContent.length < 150) return;
-      if (mainContent.length < 15) return;
+      // Facebook text nodes
+      const textNodes = Array.from(
+        postClone.querySelectorAll('div[dir="auto"]')
+      );
 
-      // Extract post URL and stable ID
+      const texts = textNodes
+        .map((n) => normalizeWhitespace(n.innerText))
+        .filter(Boolean)
+        .filter((t) => t.length > 2);
+
+      let mainContent = dedupeLines(texts.join('\n'));
+
+      // Skip obvious junk
+      if (mainContent.length < 20) return;
+
+      if (
+        mainContent.includes('Vendre un article') &&
+        mainContent.length < 150
+      ) {
+        return;
+      }
+
+      // -------------------------------------------------------------------
+      // Extract canonical listing URL + ID
+      // -------------------------------------------------------------------
+
       const links = Array.from(item.querySelectorAll('a'));
-      let postUrl        = 'none';
-      let fbId           = null;
+
+      let postUrl = null;
+      let fbId = null;
       let fallbackUserId = null;
 
       for (const link of links) {
-        const href      = link.href || '';
-        const postMatch = href.match(/(?:posts|permalink|listing)\/(\d+)/);
-        if (postMatch) { postUrl = href.split('?')[0].split('&')[0]; fbId = postMatch[1]; break; }
+        const href = link.href || '';
+
+        // Marketplace listing
+        const listingMatch = href.match(/listing\/(\d+)/);
+        if (listingMatch) {
+          fbId = listingMatch[1];
+          postUrl = `https://www.facebook.com/commerce/listing/${fbId}/`;
+          break;
+        }
+
+        // Group post permalink
+        const postMatch = href.match(/(?:posts|permalink)\/(\d+)/);
+        if (postMatch) {
+          fbId = postMatch[1];
+          postUrl = href.split('?')[0].split('&')[0];
+          break;
+        }
+
+        // fallback identity
         const userMatch = href.match(/\/user\/(\d+)/);
-        if (userMatch && !fallbackUserId) fallbackUserId = userMatch[1];
+        if (userMatch && !fallbackUserId) {
+          fallbackUserId = userMatch[1];
+        }
       }
 
-      const textFingerprint = mainContent.replace(/[^a-zA-Z0-9]/g, '').slice(0, 30);
-      const rawId           = fbId || `fp_${fallbackUserId || 'anon'}_${textFingerprint}`;
+      const fingerprint = mainContent
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '')
+        .slice(0, 40);
 
-      // Anti-ghost-image: only real scontent images over 100px wide
+      const rawId =
+        fbId ||
+        `fp_${fallbackUserId || 'anon'}_${fingerprint}`;
+
+      // -------------------------------------------------------------------
+      // Images
+      // -------------------------------------------------------------------
+
       const imageUrls = Array.from(item.querySelectorAll('img'))
-        .filter((img) => img.src.includes('scontent') && img.width > 100)
-        .map((img) => img.src);
+        .map((img) => img.src)
+        .filter(Boolean)
+        .filter((src) => src.includes('scontent'))
+        .filter((src) => !src.includes('emoji'))
+        .filter((src, index, arr) => arr.indexOf(src) === index);
 
-      results.push({ rawId, url: postUrl, address_raw: mainContent, image_urls: imageUrls, price: mainContent });
-    } catch (_) {}
+      results.push({
+        rawId,
+        url: postUrl || 'none',
+        address_raw: mainContent,
+        image_urls: imageUrls,
+        price: mainContent,
+      });
+    } catch (err) {
+      console.error(err);
+    }
   });
 
   return results;
@@ -147,7 +235,7 @@ module.exports = {
   // independently of the actual post feed.
   scrollTargetPreference:  'document',
 
-  scrollSafetyLimit:       50,
+  scrollSafetyLimit:       10,
   scrollIdleRounds:        6,       // FB lazy-loads slowly, give it more rounds
   initialDelayMs:          8000,    // extra time for FB's heavy initial render
   scrollDelayMs:           1200,

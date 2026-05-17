@@ -58,11 +58,15 @@ function extractListingsFromDocument() {
 
   const text = (node) => String(node?.textContent || '').replace(/\s+/g, ' ').trim();
 
-  const cards = Array.from(document.querySelectorAll('main a[href^="/annonces/"]'));
+  // FIX: Iterate over the listing card containers, NOT the inner links.
+  const cards = Array.from(document.querySelectorAll('main .group.bg-card'));
 
   cards.forEach((card) => {
     try {
-      const href = card.getAttribute('href') || card.href || '';
+      const link = card.querySelector('a[href^="/annonces/"]');
+      if (!link) return;
+
+      const href = link.getAttribute('href') || link.href || '';
       const match = href.match(/\/annonces\/([0-9a-f-]{8,})/i);
       if (!match) return;
 
@@ -70,19 +74,22 @@ function extractListingsFromDocument() {
       if (seen.has(rawId)) return;
       seen.add(rawId);
 
+      // Extract text content
       const titleNode = card.querySelector('h3');
-      const typeNode = Array.from(card.querySelectorAll('div, span')).find((node) => {
-        const label = text(node);
-        return label === 'chambre' || label === 'appartement';
-      }) || null;
+      const typeNode = titleNode ? titleNode.nextElementSibling : null;
+      
+      const mapPinIcon = card.querySelector('svg.lucide-map-pin');
+      const locationNode = mapPinIcon ? mapPinIcon.nextElementSibling : null;
+      
+      const priceNode = card.querySelector('.text-2xl.font-bold');
+      const periodNode = priceNode ? priceNode.nextElementSibling : null;
+      
+      const priceContainer = priceNode ? priceNode.parentElement : null;
+      const extraNode = priceContainer ? priceContainer.nextElementSibling : null;
 
-      const locationNode = Array.from(card.querySelectorAll('span, div')).find((node) => /Vd$/i.test(text(node))) || null;
-      const priceNode = card.querySelector('.text-2xl.font-bold') || null;
-      const periodNode = Array.from(card.querySelectorAll('span')).find((node) => /\/mois/i.test(text(node))) || null;
-      const extraNode = Array.from(card.querySelectorAll('span')).find((node) => {
-        const value = text(node);
-        return value && value !== text(priceNode) && value !== text(periodNode) && !/Vd$/i.test(value);
-      }) || null;
+      // FIX: Extract images
+      const imgNodes = Array.from(card.querySelectorAll('img'));
+      const image_urls = imgNodes.map(img => img.src || img.getAttribute('src')).filter(Boolean);
 
       results.push({
         rawId,
@@ -93,6 +100,7 @@ function extractListingsFromDocument() {
         location_raw: text(locationNode),
         price: priceNode ? `${text(priceNode)} ${text(periodNode)}`.trim() : '',
         availability_text: text(extraNode),
+        image_urls: image_urls
       });
     } catch (_) {}
   });
@@ -105,7 +113,8 @@ async function extractListings(page) {
     await page.getByRole('button', { name: 'Accepter' }).click({ timeout: 2000 });
   } catch (_) {}
 
-  await page.waitForSelector('main a[href^="/annonces/"] h3', { timeout: 15000 });
+  // FIX: Wait for the new robust selector
+  await page.waitForSelector('main .group.bg-card h3', { timeout: 15000 });
   const raw = await page.evaluate(extractListingsFromDocument);
 
   return raw.map((item) => {
@@ -116,7 +125,7 @@ async function extractListings(page) {
       source: SOURCE_CONST,
       url: item.url,
       address_raw: item.address_raw,
-      image_urls: [],
+      image_urls: item.image_urls || [], // FIX: Passed through image URLs instead of a hardcoded []
       title: item.title || null,
       description: null,
       price: extractPrice(item.price),

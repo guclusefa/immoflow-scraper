@@ -15,8 +15,8 @@ const { extractPrice } = require('../../core/price-utils');
 const { DEFAULT_SOURCE_CONFIG } = require('../../core/config');
 
 const SOURCE_ID     = 'facebook-marketplace';
-const SOURCE_CONST  = 'FACEBOOK_MARKETPLACE';   // written to listings.source
-const ID_PREFIX     = 'FACEBOOK_MARKETPLACE_';  // prepended to listings.id
+const SOURCE_CONST  = 'FACEBOOK_MARKETPLACE';
+const ID_PREFIX     = 'FACEBOOK_MARKETPLACE_';
 
 // ---------------------------------------------------------------------------
 // Target resolution
@@ -39,6 +39,12 @@ function getTargets({ urls = [], env = {} } = {}) {
   return raw.split(',').map((u) => u.trim()).filter(Boolean);
 }
 
+function parseLocation(locText) {
+  if (!locText) return null;
+  const parts = locText.split(',');
+  return parts[0].trim();
+}
+
 // ---------------------------------------------------------------------------
 // DOM parser — runs inside page.evaluate (browser context only)
 // ---------------------------------------------------------------------------
@@ -59,25 +65,32 @@ function extractListingsFromDocument() {
       const title     = document.querySelector('meta[property="og:title"]')?.getAttribute('content') || document.title || '';
       const desc      = document.querySelector('meta[property="og:description"]')?.getAttribute('content') || '';
       const image     = document.querySelector('meta[property="og:image"]')?.getAttribute('content') || null;
-      const bodyText  = document.body?.innerText || '';
-      results.push({ rawId, url: pageUrl.split('?')[0], address_raw: desc || title, image_urls: image ? [image] : [], price: bodyText });
+      
+      results.push({ 
+          rawId, 
+          url: pageUrl.split('?')[0], 
+          locationText: desc || title, 
+          titleText: title,
+          image_urls: image ? [image] : [], 
+          priceText: desc 
+      });
       return results;
     }
   } catch (_) {}
 
-  // 2. Feed / search page — aria-label-first strategy (battle-tested)
-  for (const a of Array.from(document.querySelectorAll('a'))) {
+  // 2. Feed / search page
+  const cards = Array.from(document.querySelectorAll('a[href*="/item/"], a[href*="/product/"]'));
+  
+  cards.forEach((a) => {
     try {
       const href = a.getAttribute('href') || a.href || '';
-      if (!href.includes('/item/') && !href.includes('/product/')) continue;
-
       const match = href.match(/\/(?:item|product)\/(\d+)/i);
-      if (!match) continue;
+      if (!match) return;
 
       const rawId = match[1];
-      if (!rawId || seen.has(rawId)) continue;
+      if (!rawId || seen.has(rawId)) return;
 
-      // Prefer aria-label over raw text — it is the intended machine-readable label
+      // Prefer aria-label over raw text if it contains structured data
       let ariaLabel = a.getAttribute('aria-label') || '';
       if (!ariaLabel) {
         const inner = a.querySelector('[aria-label]');
@@ -85,8 +98,9 @@ function extractListingsFromDocument() {
       }
 
       const innerText  = a.innerText || '';
-      const rawText    = (ariaLabel.length > 10 ? ariaLabel : innerText).replace(/\n/g, ', ').trim();
-      const textContent = rawText.length > 5 ? rawText : 'Détails non disponibles';
+      const rawText    = (ariaLabel.length > 10 ? ariaLabel : innerText).trim();
+      
+      if (!rawText) return;
 
       seen.add(rawId);
 
@@ -94,14 +108,36 @@ function extractListingsFromDocument() {
       if (url.startsWith('/')) url = `https://www.facebook.com${url}`;
       url = url.split('?')[0];
 
-      // Anti-ghost-image check: exclude base64 data URIs (loading placeholders)
+      // Anti-ghost-image check
       const images = Array.from(a.querySelectorAll('img'))
         .map((img) => img.getAttribute('src') || '')
         .filter((src) => src && src.startsWith('http'));
 
-      results.push({ rawId, url, address_raw: textContent, image_urls: [...new Set(images)], price: textContent });
+      let priceText = null;
+      let titleText = null;
+      let locationText = null;
+
+      // Split the structured newline text out
+      const parts = rawText.split('\n').map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 3) {
+          priceText = parts[0];
+          titleText = parts[1];
+          locationText = parts[2];
+      } else if (parts.length > 0) {
+          titleText = parts.join(', ');
+          priceText = parts.find(p => /\d/.test(p) && /CHF|€|\$/i.test(p)) || null;
+      }
+
+      results.push({ 
+          rawId, 
+          url, 
+          locationText: locationText || titleText, 
+          titleText,
+          image_urls: [...new Set(images)], 
+          priceText 
+      });
     } catch (_) {}
-  }
+  });
 
   return results;
 }
@@ -110,12 +146,7 @@ function extractListingsFromDocument() {
 // Playwright extractor
 // ---------------------------------------------------------------------------
 
-/**
- * @param {import('playwright').Page} page
- * @returns {Promise<object[]>}
- */
 async function extractListings(page) {
-  // Wait for React Suspense to resolve and inject listing anchors
   try {
     await page.waitForSelector('a[href*="/item/"], a[href*="/product/"]', { timeout: 10_000 });
   } catch (_) {
@@ -123,7 +154,6 @@ async function extractListings(page) {
     await page.screenshot({ path: 'fb-marketplace-debug.png', fullPage: true }).catch(() => {});
   }
 
-  // DOM cleanup: hide the map overlay that blocks scroll
   await page.evaluate(() => {
     try {
       Array.from(document.querySelectorAll(
@@ -139,11 +169,11 @@ async function extractListings(page) {
     id:              `${ID_PREFIX}${item.rawId}`,
     source:          SOURCE_CONST,
     url:             item.url,
-    address_raw:     item.address_raw,
+    address_raw:     item.locationText,
     image_urls:      item.image_urls || [],
-    title:           null,
+    title:           item.titleText || null,
     description:     null,
-    price:           extractPrice(item.price),
+    price:           extractPrice(item.priceText),
     currency:        'CHF',
     price_period:    'month',
     rooms:           null,
@@ -153,7 +183,7 @@ async function extractListings(page) {
     street:          null,
     street_number:   null,
     zip_code:        null,
-    city:            null,
+    city:            parseLocation(item.locationText),
     country_code:    'CH',
     latitude:        null,
     longitude:       null,
@@ -173,10 +203,9 @@ module.exports = {
   cookieSourceId: 'facebook',
   loginRequired:  true,
 
-  // Scroll config — explicitly defined so DEFAULT_SOURCE_CONFIG spread cannot clobber them
-  scrollSafetyLimit:       50,
+  scrollSafetyLimit:       1, // Marketplace feed is very unreliable to scroll, better to stop early and get what we have, rather than risk FB blocking us for too much scrolling. Also 24 listings is already a good amount for Marketplace which often has fewer listings than Groups.
   scrollIdleRounds:        4,
-  initialDelayMs:          4000,   // shorter: waitForSelector already waits for React
+  initialDelayMs:          4000, 
   scrollDelayMs:           1200,
   scrollDistance:          900,
   scrollTargetPreference:  'auto',
