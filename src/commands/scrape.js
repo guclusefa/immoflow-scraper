@@ -9,17 +9,65 @@ function isTruthy(value) {
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
 }
 
+// ---------------------------------------------------------------------------
+// Discord Alert Engine
+// ---------------------------------------------------------------------------
+
 function buildRunStats(summary = []) {
-  return summary.reduce((acc, row) => {
-    if (row.error) acc.failed += 1;
-    else if (row.skipped) acc.skipped += 1;
-    else {
-      acc.succeeded += 1;
-      acc.newCount += Number(row.newCount || 0);
-      acc.updatedCount += Number(row.updatedCount || 0);
+  const stats = {
+    totalSources: summary.length,
+    okSources: 0,
+    warningSources: 0,
+    failedSources: 0,
+    skippedSources: 0,
+    newCount: 0,
+    updatedCount: 0,
+    status: 'GREEN' // Default to green
+  };
+
+  summary.forEach((row) => {
+    stats.newCount += Number(row.newCount || 0);
+    stats.updatedCount += Number(row.updatedCount || 0);
+
+    // 1. Total Source Crash
+    if (row.error) {
+      stats.failedSources++;
+      return;
     }
-    return acc;
-  }, { succeeded: 0, failed: 0, skipped: 0, newCount: 0, updatedCount: 0 });
+
+    // 2. Skipped Source (Treat as a warning for overall run health)
+    if (row.skipped) {
+      stats.skippedSources++;
+      stats.warningSources++;
+      return;
+    }
+
+    // 3. Inspect URL-level results
+    let hasUrlError = false;
+    let hasWarning = false;
+
+    (row.urlResults || []).forEach((res) => {
+      if (res.error || res.sessionExpired) hasUrlError = true;
+      else if (res.warnings && res.warnings.length > 0) hasWarning = true;
+    });
+
+    if (hasUrlError) {
+      stats.failedSources++; // Treat source as failed if any URL had a hard error
+    } else if (hasWarning) {
+      stats.warningSources++; // Treat source as warning if any URL had a warning
+    } else {
+      stats.okSources++;
+    }
+  });
+
+  // Determine overarching color status
+  if (stats.failedSources === stats.totalSources && stats.totalSources > 0) {
+    stats.status = 'RED'; // Total failure
+  } else if (stats.failedSources > 0 || stats.warningSources > 0) {
+    stats.status = 'ORANGE'; // Partial failure or warnings present
+  }
+
+  return stats;
 }
 
 async function sendDiscordRunAlert({ summary, startedAt, endedAt, sourceId }) {
@@ -27,61 +75,96 @@ async function sendDiscordRunAlert({ summary, startedAt, endedAt, sourceId }) {
   if (!webhookUrl) return;
 
   const stats = buildRunStats(summary);
-  const hasFailure = stats.failed > 0;
   const alertOnSuccess = isTruthy(process.env.DISCORD_ALERT_ON_SUCCESS || '');
-  if (!hasFailure && !alertOnSuccess) return;
+  
+  // Only skip if it's completely GREEN and the user turned off success alerts
+  if (stats.status === 'GREEN' && !alertOnSuccess) return;
 
   const durationMs = Math.max(0, endedAt.getTime() - startedAt.getTime());
-  const modeLabel = sourceId ? `source=${sourceId}` : 'all-sources';
-  const header = hasFailure ? 'immoflow scrape FAILED' : 'immoflow scrape OK';
-
-  const details = summary
-    .map((row) => {
-      if (row.error) return `• **${row.id}**: ❌ FAILED — ${row.error}`;
-      if (row.skipped) return `• **${row.id}**: ⚠️ SKIPPED`;
-      return `• **${row.id}**: ✅ OK — ${row.newCount} new, ${row.updatedCount} updated`;
-    })
-    .join('\n');
-
-  // Short list of failed items for quick scan
-  const failedDetails = summary
-    .filter((r) => r.error)
-    .map((r) => `• ${r.id}: ${r.error}`)
-    .slice(0, 6)
-    .join('\n');
-
-  const color = hasFailure ? 0xE74C3C : 0x2ECC71; // red / green
   const elapsedSec = (durationMs / 1000).toFixed(1) + 's';
+  const modeLabel = sourceId ? `Source: ${sourceId}` : 'All Sources';
+
+  // Map status to colors and icons
+  const colorMap = {
+    GREEN: 0x2ECC71,  // Success
+    ORANGE: 0xF39C12, // Warnings / Partial Failures
+    RED: 0xE74C3C     // Fatal
+  };
+  
+  const iconMap = {
+    GREEN: '✅',
+    ORANGE: '⚠️',
+    RED: '❌'
+  };
 
   const embed = {
-    title: `${hasFailure ? '❌' : '✅'} ${header}`,
-    color,
+    title: `${iconMap[stats.status]} immoflow scrape finished`,
+    color: colorMap[stats.status],
     fields: [
-      { name: 'Mode', value: modeLabel, inline: true },
-      { name: 'Duration', value: elapsedSec, inline: true },
-      { name: 'Sources', value: `ok=${stats.succeeded}, failed=${stats.failed}, skipped=${stats.skipped}`, inline: true },
-      { name: 'Rows', value: `new=${stats.newCount}, updated=${stats.updatedCount}`, inline: true },
+      { name: 'Run Details', value: `**Mode:** ${modeLabel}\n**Time:** ${elapsedSec}`, inline: true },
+      { name: 'Summary', value: `✅ ${stats.okSources} | ⚠️ ${stats.warningSources} | ❌ ${stats.failedSources} | ⏭️ ${stats.skippedSources}`, inline: true },
+      { name: 'Database', value: `✨ **${stats.newCount}** new\n🔄 **${stats.updatedCount}** updated`, inline: true },
     ],
-    description: details.slice(0, 3800) || '—',
     timestamp: endedAt.toISOString(),
-    footer: { text: 'immoflow scraper' },
+    footer: { text: 'immoflow scraper engine' },
   };
 
-  // If there are failures, add a concise failed-details field for quick scanning
-  if (hasFailure && failedDetails) {
-    embed.fields.push({ name: 'Failures (first 6)', value: failedDetails.slice(0, 1024) });
+  // Build a detailed breakdown per source
+  for (const row of summary) {
+    let fieldName = '';
+    let lines = [];
+
+    if (row.error) {
+      fieldName = `❌ ${row.id.toUpperCase()}`;
+      lines.push(`**Fatal Error**: ${row.error}`);
+    } else if (row.skipped) {
+      fieldName = `⏭️ ${row.id.toUpperCase()}`;
+      lines.push(`*Skipped: ${row.skipReason}*`);
+    } else {
+      fieldName = `📊 ${row.id.toUpperCase()} (+${row.newCount} / ~${row.updatedCount})`;
+      
+      // Breakdown each URL
+      for (const res of (row.urlResults || [])) {
+        // Truncate URL for readable discord logs
+        let shortUrl = res.url;
+        try { 
+          const u = new URL(res.url); 
+          shortUrl = (u.pathname + u.search).replace(/\/$/, ''); 
+        } catch(e){}
+        if (shortUrl.length > 45) shortUrl = shortUrl.substring(0, 42) + '...';
+
+        if (res.sessionExpired) {
+          lines.push(`❌ \`${shortUrl}\`\n↳ Session expired (Needs login)`);
+        } else if (res.error) {
+          lines.push(`❌ \`${shortUrl}\`\n↳ Error: ${res.error}`);
+        } else if (res.warnings && res.warnings.length > 0) {
+          lines.push(`⚠️ \`${shortUrl}\`\n↳ ${res.listingCount} items. *${res.warnings.join(', ')}*`);
+        } else {
+          lines.push(`✅ \`${shortUrl}\`\n↳ ${res.listingCount} items (${res.scrollAttempts} scrolls)`);
+        }
+      }
+      
+      if (lines.length === 0) lines.push('*No URLs processed*');
+    }
+
+    let fieldValue = lines.join('\n');
+    // Discord max length per field value is 1024
+    if (fieldValue.length > 1024) {
+      fieldValue = fieldValue.substring(0, 1010) + '... (truncated)';
+    }
+
+    embed.fields.push({
+      name: fieldName,
+      value: fieldValue,
+      inline: false
+    });
   }
-
-  const body = {
-    username: 'immoflow',
-    embeds: [embed],
-  };
 
   try {
     const res = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ username: 'immoflow', embeds: [embed] }),
     });
 
     if (!res.ok) {
@@ -92,6 +175,10 @@ async function sendDiscordRunAlert({ summary, startedAt, endedAt, sourceId }) {
     console.error(`⚠️  Discord webhook error: ${err.message}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Main CLI Runner
+// ---------------------------------------------------------------------------
 
 function parseScrapeArgs(args = []) {
   const options = { urls: [] };
@@ -139,10 +226,11 @@ async function runScrape(args = []) {
     sourceId: options.sourceId,
   });
 
-  const failed = summary.filter((row) => row.error);
-  if (failed.length) {
-    const failedSources = failed.map((row) => row.id).join(', ');
-    throw new Error(`Scrape completed with ${failed.length} failed source(s): ${failedSources}`);
+  // Determine if we should crash the script (only if ALL failed or a fatal error happened)
+  const stats = buildRunStats(summary);
+  if (stats.status === 'RED') {
+    const failedSources = summary.filter((row) => row.error).map((row) => row.id).join(', ');
+    throw new Error(`Scrape completed with total failure. Failed source(s): ${failedSources || 'All URLs failed'}`);
   }
 }
 
