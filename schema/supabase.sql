@@ -47,6 +47,9 @@ BEGIN
     -- existing user choices on UPDATE.
     IF TG_OP = 'INSERT' THEN
         NEW.personal_status = COALESCE(NEW.personal_status, 'inbox');
+        IF NEW.personal_status = 'contacted' THEN
+            NEW.contacted_at = NOW();
+        END IF;
     ELSE
         -- On UPDATE: if the incoming value is NULL, keep the existing value.
         -- This is the correct guard: a scraper upsert must never zero out
@@ -54,6 +57,12 @@ BEGIN
         NEW.personal_status = COALESCE(NEW.personal_status, OLD.personal_status, 'inbox');
         NEW.snooze_until    = COALESCE(NEW.snooze_until,    OLD.snooze_until);
         NEW.note            = COALESCE(NEW.note,            OLD.note);
+
+        -- Only stamp the timestamp when the row newly enters contacted.
+        IF NEW.personal_status = 'contacted'
+           AND OLD.personal_status IS DISTINCT FROM 'contacted' THEN
+            NEW.contacted_at = NOW();
+        END IF;
     END IF;
 
     RETURN NEW;
@@ -140,13 +149,14 @@ CREATE TABLE IF NOT EXISTS listings (
     first_seen       DATE        NOT NULL DEFAULT CURRENT_DATE,
     last_seen        DATE        NOT NULL DEFAULT CURRENT_DATE,
     last_scraped_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    contacted_at     TIMESTAMPTZ,
 
     -- ── User workflow (UI-managed; scrapers must NEVER overwrite) ────────────
     personal_status  TEXT        NOT NULL DEFAULT 'inbox'
                                  CHECK (personal_status IN (
                                      'inbox', 'shortlisted', 'contacted',
                                      'followup', 'visit', 'applied',
-                                     'accepted', 'refused', 'ignored'
+                                     'accepted', 'refused', 'ignored', 'ghosted'
                                  )),
     snooze_until     DATE,
     note             TEXT,
@@ -177,8 +187,26 @@ CREATE INDEX IF NOT EXISTS idx_listings_price            ON listings (price);
 CREATE INDEX IF NOT EXISTS idx_listings_rooms            ON listings (rooms);
 CREATE INDEX IF NOT EXISTS idx_listings_last_seen        ON listings (last_seen);
 CREATE INDEX IF NOT EXISTS idx_listings_last_scraped_at  ON listings (last_scraped_at DESC);
+CREATE INDEX IF NOT EXISTS idx_listings_contacted_at     ON listings (contacted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_listings_listing_type     ON listings (listing_type);
 CREATE INDEX IF NOT EXISTS idx_listings_available_from   ON listings (available_from);
+
+-- Auto-ghost contacted listings after 7 days without a reply.
+CREATE OR REPLACE FUNCTION ghost_stale_contacted_listings()
+RETURNS INTEGER LANGUAGE plpgsql AS $$
+DECLARE
+        updated_count INTEGER;
+BEGIN
+        UPDATE listings
+             SET personal_status = 'ghosted'
+         WHERE personal_status = 'contacted'
+             AND contacted_at IS NOT NULL
+             AND contacted_at <= NOW() - INTERVAL '7 days';
+
+        GET DIAGNOSTICS updated_count = ROW_COUNT;
+        RETURN updated_count;
+END;
+$$;
 
 -- =============================================================================
 -- price_history
