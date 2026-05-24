@@ -187,3 +187,5 @@ Add new variables to `.env.example` when adding a source.
   Reliably returns: `address_raw`, `price`, `rooms`, `living_space_m2`, `street`, `street_number`, `zip_code`, `city`, `property_type`, `title`, `description`, `image_urls`, `available_from`.
  - `naef` — Naef Immobilier Lausanne rental search results. No login required. Env: `NAEF_URLS`.
    Reliably returns: `address_raw`, `price`, `rooms`, `living_space_m2`, `title`, `image_urls`.
+ - `pbbg` — PBBG Lausanne rental search results. No login required. Env: `PBBG_URLS`.
+   Reliably returns: `address_raw`, `price`, `rooms`, `living_space_m2`, `title`, `image_urls`.
