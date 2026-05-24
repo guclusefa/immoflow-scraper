@@ -191,3 +191,5 @@ Add new variables to `.env.example` when adding a source.
    Reliably returns: `address_raw`, `price`, `rooms`, `living_space_m2`, `title`, `image_urls`.
  - `regimo` — Regimo Lausanne rental listings. No login required. Env: `REGIMO_URLS`.
    Expected to return: `address_raw`, `price`, `rooms`, `living_space_m2`, `title`, `image_urls`.
+   - `galland` — Galland 1889 selection (requires login). Env: `GALLAND_URLS`.
+     Reliably returns: `address_raw`, `price`, `rooms`, `living_space_m2`, `street`, `city`, `title`, `image_urls`.
