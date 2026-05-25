@@ -661,8 +661,8 @@ async function scrapeSource({ source, browser, db, options, sourceLabel }) {
           urlStat.warnings.push(msg);
         }
 
-        // Scroll fallback warning (already logged above, surface in Discord too)
-        if (urlStat.scrollFallback) {
+        // Only surface the fallback when we did not recover any listings.
+        if (urlStat.scrollFallback && urlStat.listingCount === 0) {
           urlStat.warnings.push('Scroll target auto-corrected to document (possible DOM change)');
         }
 
