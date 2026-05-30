@@ -1,0 +1,6 @@
+services:
+  scraper:
+    build: .
+    volumes:
+      - ./storage:/app/storage
+      - .env:/app/.env
