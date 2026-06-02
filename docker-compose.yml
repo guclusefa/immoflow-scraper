@@ -1,6 +1,8 @@
 services:
   scraper:
     build: .
+    container_name: immoflow-scraper
+    env_file:
+      - .env
     volumes:
       - ./storage:/app/storage
-      - .env:/app/.env
